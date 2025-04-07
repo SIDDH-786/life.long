@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medicine Substitute Scanner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+    <style>
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .fade-in { animation: fadeIn 0.5s ease-in-out; }
+        .hover-scale { transition: transform 0.3s ease; }
+        .hover-scale:hover { transform: scale(1.05); }
+        .glass { 
+            background: rgba(255, 255, 255, 0.1); 
+            backdrop-filter: blur(10px); 
+            border: 1px solid rgba(255, 255, 255, 0.2); 
+        }
+        #ocrModal, #cameraModal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        #ocrModal .modal-content, #cameraModal .modal-content {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            width: 90%;
+            max-width: 600px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        #ocrText {
+            resize: vertical;
+            font-size: 16px;
+            padding: 10px;
+        }
+        #videoPreview {
+            width: 100%;
+            max-height: 400px;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-100 via-purple-100 to-pink-100 min-h-screen font-sans">
+    <div class="container mx-auto p-6">
+        <h1 class="text-4xl font-extrabold text-center mb-8 text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600">
+            MedSaver
+        </h1>
+        
+        <div class="flex flex-col sm:flex-row gap-4 mb-8 justify-center items-center">
+            <input type="text" id="searchInput" placeholder="Search medicines or conditions (e.g., cold fever)" 
+                   class="w-full sm:w-96 p-3 rounded-full shadow-lg focus:outline-none focus:ring-2 focus:ring-purple-400 glass text-gray-800 placeholder-gray-500">
+            <button id="scanButton" class="bg-gradient-to-r from-blue-500 to-purple-500 text-white p-3 rounded-full shadow-lg hover:from-blue-600 hover:to-purple-600 hover-scale">
+                <svg class="w-6 h-6 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                Scan from File
+            </button>
+            <button id="cameraButton" class="bg-gradient-to-r from-green-500 to-teal-500 text-white p-3 rounded-full shadow-lg hover:from-green-600 hover:to-teal-600 hover-scale">
+                <svg class="w-6 h-6 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h3l2-2h4l2 2h3a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-3-3v6" />
+                </svg>
+                Use Camera
+            </button>
+        </div>
+
+        <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display: none;" />
+
+        <div id="results" class="hidden">
+            <div class="overflow-x-auto rounded-xl shadow-2xl glass">
+                <table class="w-full text-gray-800">
+                    <thead class="bg-gradient-to-r from-blue-600 to-purple-600 text-white">
+                        <tr>
+                            <th class="p-4 text-left rounded-tl-xl">Medicine Name</th>
+                            <th class="p-4 text-left">Pack Size</th>
+                            <th class="p-4 text-left">Generic Price</th>
+                            <th class="p-4 text-left">Category</th>
+                            <th class="p-4 text-left">Cause</th>
+                            <th class="p-4 text-left">Branded Substitutes</th>
+                            <th class="p-4 text-left">Branded Price</th>
+                            <th class="p-4 text-left rounded-tr-xl">Price Difference</th>
+                        </tr>
+                    </thead>
+                    <tbody id="medicineTable" class="bg-white bg-opacity-80"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- OCR Result Modal -->
+        <div id="ocrModal">
+            <div class="modal-content glass">
+                <h2 class="text-xl font-bold mb-4 text-gray-800">Edit Scanned Text</h2>
+                <textarea id="ocrText" class="w-full p-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-400" rows="6" placeholder="Scanned text will appear here..."></textarea>
+                <div class="flex justify-end gap-4 mt-4">
+                    <button id="cancelOcr" class="bg-gray-400 text-white p-2 rounded-lg hover:bg-gray-500 hover-scale">Cancel</button>
+                    <button id="searchOcr" class="bg-gradient-to-r from-blue-500 to-purple-500 text-white p-2 rounded-lg hover:from-blue-600 hover:to-purple-600 hover-scale">Search</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Camera Modal -->
+        <div id="cameraModal">
+            <div class="modal-content glass">
+                <h2 class="text-xl font-bold mb-4 text-gray-800">Capture Medicine</h2>
+                <video id="videoPreview" autoplay playsinline></video>
+                <div class="flex justify-end gap-4 mt-4">
+                    <button id="cancelCamera" class="bg-gray-400 text-white p-2 rounded-lg hover:bg-gray-500 hover-scale">Cancel</button>
+                    <button id="captureCamera" class="bg-gradient-to-r from-green-500 to-teal-500 text-white p-2 rounded-lg hover:from-green-600 hover:to-teal-600 hover-scale">Capture</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="text-center mt-10 text-lg" style="font-family: 'Pacifico', cursive; color: #6B21A8;">
+        Powered by Siddhant
+    </footer>
+
+    <script>
+        <!-- <h1>
+        <p>Our objective is to provide a comprehensive platform that empowers individuals who are unable to afford expensive branded medicines by offering access to affordable generic alternatives. We aim to bridge the gap between healthcare needs and financial constraints, ensuring that everyone has the opportunity to receive effective treatment without compromising on quality.</p>
+        </h1> -->
+    
+    <!--h2>Vision</h2>
+    <p>We envision a world where healthcare is accessible to all, regardless of economic status. By promoting awareness and availability of generic medicines, we strive to create a sustainable solution that reduces the financial burden of medical expenses, fosters informed choices, and supports healthier lives through cost-effective options.</p>
+    
+        const medicines = [
+            { medicineName: "Aceclofenac 100mg and Paracetamol 325mg Tablets", packSize: "10's", priceINR: 10.0, category: "Analgesic/Antipyretic/Anti-Inflammatory", cause: "Pain, Fever, Inflammation", genericSubstitutes: "Aceclo Plus (Mankind), Zerodol-P (Cipla)", brandedPriceINR: "50-60" },
+            { medicineName: "Aceclofenac Tablets IP 100 mg", packSize: "10's", priceINR: 8.0, category: "Analgesic/Antipyretic/Anti-Inflammatory", cause: "Pain, Inflammation", genericSubstitutes: "Aceclo (Mankind), Zerodol (Cipla)", brandedPriceINR: "40-50" },
+            { medicineName: "Aspirin Gastro-resistant Tablets IP 150 mg", packSize: "14's", priceINR: 5.0, category: "Analgesic/Antipyretic/Anti-Inflammatory", cause: "Pain, Fever, Blood Thinning", genericSubstitutes: "Ecosprin (Cipla substitute, not Mankind-specific)", brandedPriceINR: "10-15" },
+            // ... (rest of the medicines array remains unchanged)
+        ];
+
+        function calculatePriceDifference(genericPrice, brandedPriceRange) {
+            const [min, max] = brandedPriceRange.split('-').map(Number);
+            const avgBranded = (min + max) / 2;
+            return (avgBranded - genericPrice).toFixed(2);
+        }
+
+        function showResults(data) {
+            const resultsDiv = document.getElementById('results');
+            const tbody = document.getElementById('medicineTable');
+            tbody.innerHTML = '';
+            
+            if (data.length === 0) {
+                resultsDiv.classList.remove('hidden');
+                tbody.innerHTML = '<tr><td colspan="8" class="p-4 text-center text-gray-500 fade-in">No results found</td></tr>';
+                return;
+            }
+
+            data.forEach((med, index) => {
+                const row = document.createElement('tr');
+                row.className = `border-b hover:bg-gray-100 hover-scale fade-in`;
+                row.style.animationDelay = `${index * 0.1}s`;
+                
+                const priceDiff = calculatePriceDifference(med.priceINR, med.brandedPriceINR);
+                const diffColor = priceDiff > 0 ? 'text-green-600 font-bold' : 'text-red-600 font-bold';
+
+                row.innerHTML = `
+                    <td class="p-4">${med.medicineName}</td>
+                    <td class="p-4">${med.packSize}</td>
+                    <td class="p-4">₹${med.priceINR.toFixed(2)}</td>
+                    <td class="p-4">${med.category}</td>
+                    <td class="p-4">${med.cause}</td>
+                    <td class="p-4">${med.genericSubstitutes}</td>
+                    <td class="p-4">₹${med.brandedPriceINR}</td>
+                    <td class="p-4 ${diffColor}">₹${priceDiff}</td>
+                `;
+                tbody.appendChild(row);
+            });
+            resultsDiv.classList.remove('hidden');
+        }
+
+        function searchMedicine(searchTerm) {
+            const terms = searchTerm.toLowerCase().split(' ').filter(term => term.length > 0);
+            const filtered = medicines.filter(med => {
+                const allFields = [
+                    med.medicineName.toLowerCase(),
+                    med.packSize.toLowerCase(),
+                    med.priceINR.toString(),
+                    med.category.toLowerCase(),
+                    med.cause.toLowerCase(),
+                    med.genericSubstitutes.toLowerCase(),
+                    med.brandedPriceINR.toLowerCase()
+                ].join(' ');
+                return terms.every(term => allFields.includes(term));
+            });
+            showResults(filtered);
+        }
+
+        // Elements
+        const cameraInput = document.getElementById('cameraInput');
+        const scanBtn = document.getElementById('scanButton');
+        const cameraBtn = document.getElementById('cameraButton');
+        const searchInput = document.getElementById('searchInput');
+        const ocrModal = document.getElementById('ocrModal');
+        const ocrText = document.getElementById('ocrText');
+        const searchOcrBtn = document.getElementById('searchOcr');
+        const cancelOcrBtn = document.getElementById('cancelOcr');
+        const cameraModal = document.getElementById('cameraModal');
+        const videoPreview = document.getElementById('videoPreview');
+        const captureCameraBtn = document.getElementById('captureCamera');
+        const cancelCameraBtn = document.getElementById('cancelCamera');
+
+        let stream = null;
+
+        // File scan functionality
+        scanBtn.addEventListener('click', () => {
+            cameraInput.click();
+        });
+
+        cameraInput.addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            processImage(file);
+        });
+
+        // Camera functionality
+        cameraBtn.addEventListener('click', async () => {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                alert("Your browser does not support camera access. Please use file upload instead.");
+                return;
+            }
+
+            try {
+                // Try rear camera first
+                stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                videoPreview.srcObject = stream;
+                cameraModal.style.display = 'flex';
+            } catch (error) {
+                console.error("Rear camera failed:", error);
+                // Fallback to any available camera
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    videoPreview.srcObject = stream;
+                    cameraModal.style.display = 'flex';
+                } catch (fallbackError) {
+                    console.error("Camera access failed:", fallbackError);
+                    let message = "Could not access camera. Please ensure:\n1. Camera permissions are allowed.\n2. You're using HTTPS or localhost.\n3. A camera is available on your device.\n\nUse file upload as an alternative.";
+                    if (fallbackError.name === "NotAllowedError") {
+                        message = "Camera access was denied. Please allow camera permissions in your browser settings.";
+                    }
+                    alert(message);
+                }
+            }
+        });
+
+        captureCameraBtn.addEventListener('click', () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = videoPreview.videoWidth;
+            canvas.height = videoPreview.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(videoPreview, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob((blob) => {
+                stopCamera();
+                processImage(blob);
+            }, 'image/jpeg');
+        });
+
+        cancelCameraBtn.addEventListener('click', () => {
+            stopCamera();
+        });
+
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            cameraModal.style.display = 'none';
+        }
+
+        async function processImage(image) {
+            const imageURL = URL.createObjectURL(image);
+            try {
+                const { data: { text } } = await Tesseract.recognize(
+                    imageURL,
+                    'eng',
+                    { logger: m => console.log(m) }
+                );
+                const cleanText = text.replace(/\s+/g, ' ').trim();
+                ocrText.value = cleanText;
+                ocrModal.style.display = 'flex';
+                ocrText.focus();
+                ocrText.select();
+            } catch (error) {
+                console.error("OCR failed:", error);
+                alert("Failed to recognize text. Try again.");
+            } finally {
+                URL.revokeObjectURL(imageURL);
+            }
+        }
+
+        searchOcrBtn.addEventListener('click', () => {
+            const refinedText = ocrText.value.trim();
+            if (refinedText) {
+                searchInput.value = refinedText;
+                searchMedicine(refinedText);
+            }
+            ocrModal.style.display = 'none';
+        });
+
+        cancelOcrBtn.addEventListener('click', () => {
+            ocrModal.style.display = 'none';
+            ocrText.value = '';
+        });
+
+        ocrModal.addEventListener('click', (e) => {
+            if (e.target === ocrModal) {
+                ocrModal.style.display = 'none';
+                ocrText.value = '';
+            }
+        });
+
+        cameraModal.addEventListener('click', (e) => {
+            if (e.target === cameraModal) {
+                stopCamera();
+            }
+        });
+
+        // Search input listener
+        searchInput.addEventListener('input', function(e) {
+            if (e.target.value.trim() === '') {
+                document.getElementById('results').classList.add('hidden');
+            } else {
+                searchMedicine(e.target.value);
+            }
+        });
+    </script>
+</body>
+</html>
